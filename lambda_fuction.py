@@ -102,28 +102,45 @@ def lambda_handler(event, context):
     resumen_key = 'resultados/resumen_certificados.csv'
     resumen_data = []
 
+    # agrupar notas por año
+    notas_por_año = {}
+    for año, _, nota in notas:
+        if año not in notas_por_año:
+            notas_por_año[año] = []
+        try:
+            notas_por_año[año].append(float(nota))
+        except:
+            continue
+
+    # calcular promedios por año
+    años_ordenados = sorted(notas_por_año.keys())[:4]  # máx 4 años
+    promedios = []
+    for año in años_ordenados:
+        promedio = round(sum(notas_por_año[año]) / len(notas_por_año[año]), 2)
+        promedios.append(promedio)
+    # completar con vacíos si no hay 4 años
+    while len(promedios) < 4:
+        promedios.append("")
+
     try:
-        existing = s3.get_object(Bucket=bucket, Key=resumen_key)
-        content = existing['Body'].read().decode('utf-8')
-        reader = csv.reader(io.StringIO(content))
+        old = s3.get_object(Bucket=bucket, Key=resumen_key)
+        reader = csv.reader(io.StringIO(old['Body'].read().decode('utf-8')))
         resumen_data = list(reader)
     except s3.exceptions.NoSuchKey:
-        resumen_data.append(['RUT', 'Nombre', 'NEM'])
+        resumen_data.append(['RUT', 'Nombre', 'NEM', 'Año 1', 'Año 2', 'Año 3', 'Año 4'])
 
-    # Eliminar fila previa del mismo RUT si existe
-    resumen_data = [row for row in resumen_data if row[0] != rut]
-    resumen_data.append([rut, nombre, str(nem)])
+    # Eliminar fila existente del mismo RUT si ya estaba
+    resumen_data = [r for r in resumen_data if r[0] != rut]
+
+    # Agregar nueva fila
+    resumen_data.append([rut, nombre, str(nem)] + promedios)
 
     resumen_output = io.StringIO()
     writer = csv.writer(resumen_output)
     for row in resumen_data:
         writer.writerow(row)
 
-    s3.put_object(
-        Bucket=bucket,
-        Key=resumen_key,
-        Body=resumen_output.getvalue()
-    )
+    s3.put_object(Bucket=bucket, Key=resumen_key, Body=resumen_output.getvalue())
 
     return {
         'statusCode': 200,
